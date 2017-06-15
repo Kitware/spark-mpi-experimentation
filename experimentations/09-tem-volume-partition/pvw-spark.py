@@ -39,7 +39,7 @@ zSizes = [(int((i+1) * deltaZ) - int(i * deltaZ)) for i in range(targetPartition
 
 def getPartition(value):
     j = value / sizeX % sizeY
-    return int(targetPartition * j / (sizeY + 1)) 
+    return int(targetPartition * j / (sizeY + 1))
 
 # -------------------------------------------------------------------------
 
@@ -75,7 +75,7 @@ def processPartition(idx, iterator):
     from vtk.vtkPVVTKExtensionsCore import vtkDistributedTrivialProducer
     from vtk.vtkCommonCore import vtkIntArray, vtkUnsignedCharArray, vtkPoints
     from vtk.vtkCommonDataModel import vtkPolyData, vtkPointData, vtkCellData, vtkCellArray
-        
+
     pointData = vtkIntArray()
     pointData.SetName('scalar')
     pointData.Allocate(globalMaxIndex)
@@ -94,7 +94,7 @@ def processPartition(idx, iterator):
     cells.InsertNextCell(points.GetNumberOfPoints())
     for i in range(points.GetNumberOfPoints()):
         cells.InsertCellPoint(i)
-        
+
     dataset = vtkPolyData()
     dataset.SetPoints(points)
     dataset.SetVerts(cells)
@@ -142,12 +142,11 @@ def processPartition(idx, iterator):
         viewportScale=1.0
         viewportMaxWidth=2560
         viewportMaxHeight=1440
-        proxies='/data/sebastien/SparkMPI/defaultProxies.json'
 
         def initialize(self):
             # Bring used components
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebFileListing(_VisualizerServer.dataDir, "Home", _VisualizerServer.excludeRegex, _VisualizerServer.groupRegex))
-            self.registerVtkWebProtocol(pv_protocols.ParaViewWebProxyManager(baseDir=_VisualizerServer.dataDir, allowedProxiesFile=_VisualizerServer.proxies, allowUnconfiguredReaders=_VisualizerServer.allReaders))
+            self.registerVtkWebProtocol(pv_protocols.ParaViewWebProxyManager(baseDir=_VisualizerServer.dataDir, allowUnconfiguredReaders=_VisualizerServer.allReaders))
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebColorManager())
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebMouseHandler())
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebViewPort(_VisualizerServer.viewportScale, _VisualizerServer.viewportMaxWidth,
@@ -175,7 +174,7 @@ def processPartition(idx, iterator):
         producer.WholeExtent = [0, 99, 0, 215, 0, 260]
         server.start_webserver(options=args, protocol=_VisualizerServer)
         pm.GetGlobalController().TriggerBreakRMIs()
-            
+
     yield (idx, targetPartition)
 
 # -------------------------------------------------------------------------

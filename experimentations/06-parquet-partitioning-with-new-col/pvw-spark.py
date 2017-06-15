@@ -75,7 +75,7 @@ def processPartition(idx, iterator):
     cells.InsertNextCell(points.GetNumberOfPoints())
     for i in range(points.GetNumberOfPoints()):
         cells.InsertCellPoint(i)
-        
+
     dataset = vtkPolyData()
     dataset.SetPoints(points)
     dataset.SetVerts(cells)
@@ -123,12 +123,11 @@ def processPartition(idx, iterator):
         viewportScale=1.0
         viewportMaxWidth=2560
         viewportMaxHeight=1440
-        proxies='/data/sebastien/SparkMPI/defaultProxies.json'
 
         def initialize(self):
             # Bring used components
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebFileListing(_VisualizerServer.dataDir, "Home", _VisualizerServer.excludeRegex, _VisualizerServer.groupRegex))
-            self.registerVtkWebProtocol(pv_protocols.ParaViewWebProxyManager(baseDir=_VisualizerServer.dataDir, allowedProxiesFile=_VisualizerServer.proxies, allowUnconfiguredReaders=_VisualizerServer.allReaders))
+            self.registerVtkWebProtocol(pv_protocols.ParaViewWebProxyManager(baseDir=_VisualizerServer.dataDir, allowUnconfiguredReaders=_VisualizerServer.allReaders))
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebColorManager())
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebMouseHandler())
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebViewPort(_VisualizerServer.viewportScale, _VisualizerServer.viewportMaxWidth,
@@ -155,7 +154,7 @@ def processPartition(idx, iterator):
         producer.UpdateDataset = 'Spark'
         server.start_webserver(options=args, protocol=_VisualizerServer)
         pm.GetGlobalController().TriggerBreakRMIs()
-            
+
     yield (idx, partition)
 
 # -------------------------------------------------------------------------
