@@ -116,25 +116,6 @@ def getMPIPartition(index):
     print('Error invalid mpi partition %d %d %d' % (index, sizeX, nbMPIPartition))
     return nbMPIPartition
 
-# -------------------------------------------------------------------------
-# Structure RDD data
-# -------------------------------------------------------------------------
-
-t0 = time.time()
-data = sc.parallelize(npArray).coalesce(1)
-t1 = time.time()
-print('### - data parallelize - %s | ' % str(t1 - t0))
-
-t0 = t1
-index = sc.parallelize(range(globalMaxIndex)).coalesce(1)
-t1 = time.time()
-print('### - index parallelize - %s | ' % str(t1 - t0))
-
-t0 = t1
-rdd = index.zip(data)
-t1 = time.time()
-print('### - zip - %s | ' % str(t1 - t0))
-
 # -----------------------------------------------------------------------------
 # Helper: ParaViewWeb options
 # -----------------------------------------------------------------------------
@@ -587,8 +568,16 @@ def visualization(partitionId, iterator):
 # Spark pipeline
 # -------------------------------------------------------------------------
 
+t0 = time.time()
+data = sc.parallelize(npArray).coalesce(1)
+index = sc.parallelize(range(globalMaxIndex)).coalesce(1)
+rdd = index.zip(data)
+
 rdd.partitionBy(nbSparkPartition, getSparkPartition).mapPartitionsWithIndex(reconstruct).map(threshold) \
    .partitionBy(nbMPIPartition, getMPIPartition).mapPartitionsWithIndex(visualization) \
    .collect()
+
+t1 = time.time()
+print('### Total execution time - %s | ' % str(t1 - t0))
 
 print('### Stop execution - %s' % str(datetime.now()))
