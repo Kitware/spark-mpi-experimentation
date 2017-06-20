@@ -39,7 +39,7 @@ nbMPIPartition = int(os.environ["MPI_SIZE"])
 t0 = time.time()
 print('### Start execution - %s' % str(datetime.now()))
 
-filePath = '/data/sebastien/SparkMPI/data-convert/etl/TiltSeries_NanoParticle_doi_10.1021-nl103400a.tif'
+filePath = '/data/sebastien/SparkMPI/data-convert/TiltSeries_NanoParticle_doi_10.1021-nl103400a.tif'
 reader = simple.TIFFSeriesReader(FileNames=[filePath])
 reader.UpdatePipeline()
 imageData = reader.GetClientSideObject().GetOutputDataObject(0)
@@ -568,10 +568,12 @@ def visualization(partitionId, iterator):
 # Spark pipeline
 # -------------------------------------------------------------------------
 
+def swap(kv):
+    return (kv[1], kv[0])
+
 t0 = time.time()
-data = sc.parallelize(npArray).coalesce(1)
-index = sc.parallelize(range(globalMaxIndex)).coalesce(1)
-rdd = index.zip(data)
+data = sc.parallelize(npArray)
+rdd = data.zipWithIndex().map(swap)
 
 rdd.partitionBy(nbSparkPartition, getSparkPartition).mapPartitionsWithIndex(reconstruct).map(threshold) \
    .partitionBy(nbMPIPartition, getMPIPartition).mapPartitionsWithIndex(visualization) \
