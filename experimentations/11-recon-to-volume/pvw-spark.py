@@ -70,6 +70,7 @@ def getPartition(value):
 
 data = sc.parallelize(npArray)
 index = sc.parallelize(range(globalMaxIndex))
+index.repartition(targetPartition)
 rdd = index.zip(data)
 rdd2 = rdd.partitionBy(targetPartition, getPartition)
 
