@@ -242,3 +242,21 @@ Choose the example to run
 $ cd 11-recon-to-volume
 $ ./start.sh
 ```
+
+__gdal__
+
+```
+$ sudo add-apt-repository ppa:ubuntugis/ppa && sudo apt-get update
+$ sudo apt-get install gdal-bin libgdal-dev
+
+$ export CPLUS_INCLUDE_PATH=/usr/include/gdal
+$ export C_INCLUDE_PATH=/usr/include/gdal
+
+$ virtualenv tmp-gdal
+$ pip install gdal==2.1.0
+
+$ cd tmp-gdal/lib/python2.7/site-packages
+$ cp -r gdal* /data/sebastien/SparkMPI/pv-install/lib/paraview-5.4/site-packages
+$ cp -r skimage /data/sebastien/SparkMPI/pv-install/lib/paraview-5.4/site-packages
+$ cp -r osgeo /data/sebastien/SparkMPI/pv-install/lib/paraview-5.4/site-packages
+```

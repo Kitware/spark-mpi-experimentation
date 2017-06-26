@@ -1,7 +1,8 @@
 from __future__ import print_function
-
 import os
 import sys
+import time
+from datetime import datetime
 import pyspark
 
 from pyspark import SparkContext
@@ -28,25 +29,29 @@ sc.getConf().set('mpi', pmi_port)
 # Read Tiff file
 # -------------------------------------------------------------------------
 
+t0 = time.time()
+print('### Start execution - %s' % str(datetime.now()))
+
 filePath = '/data/sebastien/SparkMPI/data-convert/etl/TiltSeries_NanoParticle_doi_10.1021-nl103400a.tif'
 reader = simple.TIFFSeriesReader(FileNames=[filePath])
 reader.UpdatePipeline()
 imageData = reader.GetClientSideObject().GetOutputDataObject(0)
 originalDimensions = imageData.GetDimensions()
 dataArray = imageData.GetPointData().GetScalars()
-
 intArray = vtkIntArray()
 intArray.SetNumberOfTuples(dataArray.GetNumberOfTuples())
 for idx in range(dataArray.GetNumberOfTuples()):
     intArray.SetTuple1(idx, int(dataArray.GetTuple1(idx)))
 
-print('range', dataArray.GetRange(), intArray.GetRange())
-print('GetNumberOfTuples', dataArray.GetNumberOfTuples(), intArray.GetNumberOfTuples())
 npArray = numpy_support.vtk_to_numpy(intArray)
+
+t1 = time.time()
+print('### Tiff read - %s' % str(t1 - t0))
+t0 = t1
 
 # -------------------------------------------------------------------------
 
-targetPartition = 4
+targetPartition = int(os.environ["MPI_SIZE"])
 
 sizeX = originalDimensions[0]
 sizeY = originalDimensions[1]
@@ -68,13 +73,25 @@ def getPartition(value):
 
 # -------------------------------------------------------------------------
 
-data = sc.parallelize(npArray)
-index = sc.parallelize(range(globalMaxIndex))
-index.repartition(targetPartition)
-rdd = index.zip(data)
-rdd2 = rdd.partitionBy(targetPartition, getPartition)
 
-print('number of partitions', rdd2.getNumPartitions())
+print('### Before Spark context - %s | ' % str(datetime.now()))
+data = sc.parallelize(npArray)
+t1 = time.time()
+print('### - data parallelize - %s | ' % str(t1 - t0))
+t0 = t1
+index = sc.parallelize(range(globalMaxIndex))
+t1 = time.time()
+print('### - index parallelize - %s | ' % str(t1 - t0))
+t0 = t1
+rdd = index.zip(data)
+t1 = time.time()
+print('### - zip - %s | ' % str(t1 - t0))
+t0 = t1
+rdd2 = rdd.partitionBy(targetPartition, getPartition)
+t1 = time.time()
+print('### - partition By - %s | ' % str(t1 - t0))
+t0 = t1
+print('==> number of partitions %d | ' % rdd2.getNumPartitions())
 
 # -------------------------------------------------------------------------
 
@@ -86,7 +103,7 @@ def idxToCoord(idx):
     ]
 
 def processPartition(idx, iterator):
-    print('==============> processPartition %d' % idx)
+    print('### Start data processing for %d - %s | ' % (idx, str(datetime.now())))
     import os
     os.environ["PMI_PORT"] = pmi_port
     os.environ["PMI_ID"] = str(idx)
@@ -115,8 +132,7 @@ def processPartition(idx, iterator):
     dataChunk.SetNumberOfTuples(size)
     dataChunk.Fill(0)
 
-    print('%d # Reserve chunk size (%d, %d, %d) - size: %d ' % (idx, xSizes[idx], sizeY, sizeZ, size))
-
+    t0 = time.time()
     count = 0
     for row in iterator:
         count += 1
@@ -124,21 +140,21 @@ def processPartition(idx, iterator):
         originCoords = '[%d, %d, %d]' % (coords[0], coords[1], coords[2])
         coords[0] -= iOffset
         destIdx = coords[0] + (coords[1] * xSizes[idx])  + (coords[2] * xSizes[idx] * sizeY)
-        if destIdx < 0 or destIdx > size:
-            print('(%d) %d => %s | (%d, %d, %d) => %d | [%d, %d, %d]' % (idx, row[0], originCoords, coords[0], coords[1], coords[2], destIdx, xSizes[idx], sizeY, sizeZ))
-        else:
-            dataChunk.SetValue(destIdx, row[1])
+        dataChunk.SetValue(destIdx, row[1])
 
-    print('%d # Data chunk filled (%d, %d, %d) - size: %d - filled: %d' % (idx, xSizes[idx], sizeY, sizeZ, size, count))
-
+    t1 = time.time()
+    print('%d # Gather %s | ' % (idx, str(t1 - t0)))
+    t0 = t1
+    
     # -------------------------------------------------------------------------
     # Reshape data into 3D Fortran array ordering
     # -------------------------------------------------------------------------
 
     npDataChunk = numpy_support.vtk_to_numpy(dataChunk)
     scalars_array3d = np.reshape(npDataChunk, (xSizes[idx], sizeY, sizeZ), order='F')
-
-    print('%d # Data chunk reshaped' % idx)
+    t1 = time.time()
+    print('%d # Reshape %s | ' % (idx, str(t1 - t0)))
+    t0 = t1
 
     # -------------------------------------------------------------------------
     # Reconstruction helper
@@ -268,8 +284,6 @@ def processPartition(idx, iterator):
     # Reconstruction
     # -------------------------------------------------------------------------
 
-    print('%d # Start reconstruction' % idx)
-
     tiltSeries = scalars_array3d
     tiltAngles = range(-sizeZ + 1, sizeZ, 2) # Delta angle of 2
     (Nslice, Nray, Nproj) = tiltSeries.shape
@@ -304,29 +318,63 @@ def processPartition(idx, iterator):
         recon[s, :, :] = f.reshape((Nray, Nray))
 
     (iSize, jSize, kSize) = recon.shape
-    print('%d # End reconstruction - Dimensions (%d, %d, %d)' % (idx, iSize, jSize, kSize))
+    t1 = time.time()
+    print('%d # Reconstruction %s | ' % (idx, str(t1 - t0)))
+    t0 = t1
 
     # -------------------------------------------------------------------------
     # Convert reconstruction array into VTK format
     # -------------------------------------------------------------------------
 
-    print('%d # Reshape reconstruction' % idx)
-
     arr = recon.ravel(order='A')
     vtkarray = numpy_support.numpy_to_vtk(arr)
     vtkarray.SetName('Scalars')
-
-    print('%d # Array size %d' % (idx, vtkarray.GetNumberOfTuples()))
-
-    # -------------------------------------------------------------------------
-    # Share boundary
-    # -------------------------------------------------------------------------
-
-    # pure python with mpi to share bounds
+    t1 = time.time()
+    print('%d # Reshape result %s | ' % (idx, str(t1 - t0)))
+    t0 = t1
 
     # -------------------------------------------------------------------------
+    # Data access helper
+    # -------------------------------------------------------------------------
 
-    print('%d # Create new image data from reconstruction' % idx)
+    def createSlice():
+        size = sizeY * sizeY
+        array = np.arange(size, dtype=np.int32)
+        return array
+    
+    def getSideSlice(offset, xSize):
+        size = sizeY * sizeY
+        slice = np.arange(size, dtype=np.int32)
+        
+        for i in range(size):
+            slice[i] = vtkarray.GetTuple1(int(offset + (i * xSize)))
+        return slice
+        
+    # -------------------------------------------------------------------------
+    # Add ghost points from neighbors
+    # -------------------------------------------------------------------------
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    remoteLowerSlice = None
+    remoteUpperSlice = None
+
+    if idx + 1 < targetPartition:
+        # Share upper slice
+        remoteUpperSlice = createSlice()
+        localUpperSlice = getSideSlice(xSizes[idx] - 1, xSizes[idx])
+        comm.Sendrecv(localUpperSlice, (idx+1), (2*idx + 1), remoteUpperSlice, (idx+1), (2*idx))
+    if idx > 0:
+        # Share lower slice
+        remoteLowerSlice = createSlice()
+        localLowerSlice = getSideSlice(0, xSizes[idx])
+        comm.Sendrecv(localLowerSlice, (idx-1), (2 * (idx - 1)), remoteLowerSlice, (idx-1), (2 * (idx - 1) + 1))
+
+    t1 = time.time()
+    print('%d # MPI share %s | ' % (idx, str(t1 - t0)))
+    t0 = t1
+    
+    # -------------------------------------------------------------------------
 
     dataset = vtkImageData()
     minX = 0
@@ -335,9 +383,64 @@ def processPartition(idx, iterator):
         minX = maxX
         maxX += xSizes[i]
 
-    print('%d # extent [%d, %d, %d, %d, %d, %d]' % (idx, minX, maxX - 1, 0, sizeY - 1, 0, sizeY - 1))
+    # -------------------------------------------------------------------------
+    # Add slice(s) to data
+    # -------------------------------------------------------------------------
+
+    arrayWithSlices = vtkarray.NewInstance()
+    arrayWithSlices.SetName('Scalars')
+    if remoteLowerSlice != None and remoteUpperSlice != None: 
+        # Add both slices
+        minX -= 1
+        maxX += 1
+        localSizeX = maxX - minX
+        newSize = localSizeX * sizeY * sizeY
+        arrayWithSlices.SetNumberOfTuples(newSize)
+        localOffset = 0
+        for i in range(newSize):
+            if i % localSizeX == 0:
+                arrayWithSlices.SetTuple1(i, remoteLowerSlice[i / localSizeX])
+            elif (i + 1) % localSizeX == 0:
+                arrayWithSlices.SetTuple1(i, remoteUpperSlice[((i + 1) / localSizeX) - 1])
+            else:
+                arrayWithSlices.SetTuple1(i, vtkarray.GetTuple1(localOffset))
+                localOffset += 1
+                
+    elif remoteLowerSlice != None:
+        # Add lower slice
+        minX -= 1
+        localSizeX = maxX - minX
+        newSize = localSizeX * sizeY * sizeY
+        arrayWithSlices.SetNumberOfTuples(newSize)
+        localOffset = 0
+        for i in range(newSize):
+            if i % localSizeX == 0:
+                arrayWithSlices.SetTuple1(i, remoteLowerSlice[i / localSizeX])
+            else:
+                arrayWithSlices.SetTuple1(i, vtkarray.GetTuple1(localOffset))
+                localOffset += 1
+    elif remoteUpperSlice != None:
+        # Add upper slice
+        maxX += 1
+        localSizeX = maxX - minX
+        newSize = localSizeX * sizeY * sizeY
+        arrayWithSlices.SetNumberOfTuples(newSize)
+        localOffset = 0
+        for i in range(newSize):
+            if (i + 1) % localSizeX == 0:
+                arrayWithSlices.SetTuple1(i, remoteUpperSlice[((i + 1) / localSizeX) - 1])
+            else:
+                arrayWithSlices.SetTuple1(i, vtkarray.GetTuple1(localOffset))
+                localOffset += 1
+
     dataset.SetExtent(minX, maxX - 1, 0, sizeY - 1, 0, sizeY - 1)
-    dataset.GetPointData().SetScalars(vtkarray)
+    dataset.GetPointData().SetScalars(arrayWithSlices)
+
+    t1 = time.time()
+    print('%d # build resutling image data %s | ' % (idx, str(t1 - t0)))
+    t0 = t1
+
+    # -------------------------------------------------------------------------  
 
     vtkDistributedTrivialProducer.SetGlobalOutput('Spark', dataset)
 
@@ -381,11 +484,12 @@ def processPartition(idx, iterator):
         viewportScale=1.0
         viewportMaxWidth=2560
         viewportMaxHeight=1440
+        proxies='/data/sebastien/SparkMPI/defaultProxies.json'
 
         def initialize(self):
             # Bring used components
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebFileListing(_VisualizerServer.dataDir, "Home", _VisualizerServer.excludeRegex, _VisualizerServer.groupRegex))
-            self.registerVtkWebProtocol(pv_protocols.ParaViewWebProxyManager(baseDir=_VisualizerServer.dataDir, allowUnconfiguredReaders=_VisualizerServer.allReaders))
+            self.registerVtkWebProtocol(pv_protocols.ParaViewWebProxyManager(baseDir=_VisualizerServer.dataDir, allowedProxiesFile=_VisualizerServer.proxies, allowUnconfiguredReaders=_VisualizerServer.allReaders))
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebColorManager())
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebMouseHandler())
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebViewPort(_VisualizerServer.viewportScale, _VisualizerServer.viewportMaxWidth,
@@ -407,7 +511,7 @@ def processPartition(idx, iterator):
 
     # -------------------------------------------------------------------------
 
-    print('%d # Start visualization' % idx)
+    print('%d # > Start visualization - %s | ' % (idx, str(datetime.now())))
 
     # -------------------------------------------------------------------------
 
@@ -416,16 +520,15 @@ def processPartition(idx, iterator):
         producer = simple.DistributedTrivialProducer()
         producer.UpdateDataset = ''
         producer.UpdateDataset = 'Spark'
-        print('Whole extent [%d, %d, %d, %d, %d, %d]' % (0, sizeX - 1, 0, sizeY - 1, 0, sizeY - 1))
         producer.WholeExtent = [0, sizeX - 1, 0, sizeY - 1, 0, sizeY - 1]
         server.start_webserver(options=args, protocol=_VisualizerServer)
         pm.GetGlobalController().TriggerBreakRMIs()
 
+    print('%d # < Stop visualization - %s | ' % (idx, str(datetime.now())))
     yield (idx, targetPartition)
 
 # -------------------------------------------------------------------------
 
 results = rdd2.mapPartitionsWithIndex(processPartition).collect()
-for out in results:
-    print(out)
 
+print('### Stop execution - %s' % str(datetime.now()))

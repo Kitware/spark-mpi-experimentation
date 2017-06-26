@@ -102,7 +102,7 @@ def processPartition(idx, iterator):
     from vtk.vtkPVVTKExtensionsCore import vtkDistributedTrivialProducer
     from vtk.vtkCommonCore import vtkIntArray, vtkUnsignedCharArray
     from vtk.vtkCommonDataModel import vtkImageData, vtkPointData, vtkCellData
-        
+
     offset = 0
     for i in range(idx):
         offset += zSizes[i] * sliceSize
@@ -110,7 +110,7 @@ def processPartition(idx, iterator):
 
     maxIdx = 0
     minIdx = globalMaxIndex
-    
+
     data = vtkIntArray()
     data.SetName('scalar')
     data.SetNumberOfTuples(size)
@@ -123,7 +123,7 @@ def processPartition(idx, iterator):
         minIdx = row[0] if row[0] < minIdx else minIdx
 
     print('pid %d - min: %d - max: %d' % (idx, minIdx, maxIdx))
-        
+
     dataset = vtkImageData()
     minZ = 0
     maxZ = 0
@@ -179,12 +179,11 @@ def processPartition(idx, iterator):
         viewportScale=1.0
         viewportMaxWidth=2560
         viewportMaxHeight=1440
-        proxies='/data/sebastien/SparkMPI/defaultProxies.json'
 
         def initialize(self):
             # Bring used components
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebFileListing(_VisualizerServer.dataDir, "Home", _VisualizerServer.excludeRegex, _VisualizerServer.groupRegex))
-            self.registerVtkWebProtocol(pv_protocols.ParaViewWebProxyManager(baseDir=_VisualizerServer.dataDir, allowedProxiesFile=_VisualizerServer.proxies, allowUnconfiguredReaders=_VisualizerServer.allReaders))
+            self.registerVtkWebProtocol(pv_protocols.ParaViewWebProxyManager(baseDir=_VisualizerServer.dataDir, allowUnconfiguredReaders=_VisualizerServer.allReaders))
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebColorManager())
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebMouseHandler())
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebViewPort(_VisualizerServer.viewportScale, _VisualizerServer.viewportMaxWidth,
@@ -212,7 +211,7 @@ def processPartition(idx, iterator):
         producer.WholeExtent = [0, 99, 0, 215, 0, 260]
         server.start_webserver(options=args, protocol=_VisualizerServer)
         pm.GetGlobalController().TriggerBreakRMIs()
-            
+
     yield (idx, targetPartition)
 
 # -------------------------------------------------------------------------

@@ -1,5 +1,4 @@
 from __future__ import print_function
-
 import os
 import sys
 import pyspark
@@ -34,7 +33,6 @@ reader.UpdatePipeline()
 imageData = reader.GetClientSideObject().GetOutputDataObject(0)
 originalDimensions = imageData.GetDimensions()
 dataArray = imageData.GetPointData().GetScalars()
-
 intArray = vtkIntArray()
 intArray.SetNumberOfTuples(dataArray.GetNumberOfTuples())
 for idx in range(dataArray.GetNumberOfTuples()):
@@ -70,7 +68,6 @@ def getPartition(value):
 
 data = sc.parallelize(npArray)
 index = sc.parallelize(range(globalMaxIndex))
-index.repartition(targetPartition)
 rdd = index.zip(data)
 rdd2 = rdd.partitionBy(targetPartition, getPartition)
 
@@ -319,11 +316,51 @@ def processPartition(idx, iterator):
     print('%d # Array size %d' % (idx, vtkarray.GetNumberOfTuples()))
 
     # -------------------------------------------------------------------------
-    # Share boundary
+    # Data access helper
     # -------------------------------------------------------------------------
 
-    # pure python with mpi to share bounds
+    def createSlice():
+        print('%d # createSlice' % (idx))
+        size = sizeY * sizeY
+        array = np.arange(size, dtype=np.int32)
+        print('%d # createSlice => DONE' % (idx))
+        return array
+    
+    def getSideSlice(offset, xSize):
+        print('%d # getSideSlice(%d)' % (idx, offset))
+        size = sizeY * sizeY
+        slice = np.arange(size, dtype=np.int32)
+        
+        for i in range(size):
+            slice[i] = vtkarray.GetTuple1(int(offset + (i * xSize)))
+        print('%d # getSideSlice(%d) => DONE' % (idx, offset))
+        return slice
+        
+    # -------------------------------------------------------------------------
+    # Add ghost points from neighbors
+    # -------------------------------------------------------------------------
 
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    remoteLowerSlice = None
+    remoteUpperSlice = None
+    
+    if idx + 1 < targetPartition:
+        print('%d # Share upper slice' % (idx))
+        # Share upper slice
+        remoteUpperSlice = createSlice()
+        localUpperSlice = getSideSlice(xSizes[idx] - 1, xSizes[idx])
+        comm.Sendrecv(localUpperSlice, (idx+1), (2*idx + 1), remoteUpperSlice, (idx+1), (2*idx))
+        print('%d # Share upper slice => DONE' % (idx))
+    if idx > 0:
+        print('%d # Share lower slice' % (idx))
+        # Share lower slice
+        remoteLowerSlice = createSlice()
+        localLowerSlice = getSideSlice(0, xSizes[idx])
+        comm.Sendrecv(localLowerSlice, (idx-1), (2 * (idx - 1)), remoteLowerSlice, (idx-1), (2 * (idx - 1) + 1))
+        print('%d # Share lower slice => DONE' % (idx))
+
+    print('%d # All MPI done -------' % (idx))
     # -------------------------------------------------------------------------
 
     print('%d # Create new image data from reconstruction' % idx)
@@ -336,8 +373,67 @@ def processPartition(idx, iterator):
         maxX += xSizes[i]
 
     print('%d # extent [%d, %d, %d, %d, %d, %d]' % (idx, minX, maxX - 1, 0, sizeY - 1, 0, sizeY - 1))
+
+    # -------------------------------------------------------------------------
+    # Add slice(s) to data
+    # -------------------------------------------------------------------------
+
+    arrayWithSlices = vtkarray.NewInstance()
+    arrayWithSlices.SetName('Scalars')
+    if remoteLowerSlice != None and remoteUpperSlice != None: 
+        print('%d # create new array with both slices' % (idx))
+        # Add both slices
+        minX -= 1
+        maxX += 1
+        localSizeX = maxX - minX
+        newSize = localSizeX * sizeY * sizeY
+        arrayWithSlices.SetNumberOfTuples(newSize)
+        localOffset = 0
+        for i in range(newSize):
+            if i % localSizeX == 0:
+                arrayWithSlices.SetTuple1(i, remoteLowerSlice[i / localSizeX])
+            elif (i + 1) % localSizeX == 0:
+                arrayWithSlices.SetTuple1(i, remoteUpperSlice[((i + 1) / localSizeX) - 1])
+            else:
+                arrayWithSlices.SetTuple1(i, vtkarray.GetTuple1(localOffset))
+                localOffset += 1
+        print('%d # create new array with both slices => DONE' % (idx))
+                
+    elif remoteLowerSlice != None:
+        print('%d # create new array with lower slices' % (idx))
+        # Add lower slice
+        minX -= 1
+        localSizeX = maxX - minX
+        newSize = localSizeX * sizeY * sizeY
+        arrayWithSlices.SetNumberOfTuples(newSize)
+        localOffset = 0
+        for i in range(newSize):
+            if i % localSizeX == 0:
+                arrayWithSlices.SetTuple1(i, remoteLowerSlice[i / localSizeX])
+            else:
+                arrayWithSlices.SetTuple1(i, vtkarray.GetTuple1(localOffset))
+                localOffset += 1
+        print('%d # create new array with lower slices => DONE' % (idx))
+    elif remoteUpperSlice != None:
+        print('%d # create new array with upper slices' % (idx))
+        # Add upper slice
+        maxX += 1
+        localSizeX = maxX - minX
+        newSize = localSizeX * sizeY * sizeY
+        arrayWithSlices.SetNumberOfTuples(newSize)
+        localOffset = 0
+        for i in range(newSize):
+            if (i + 1) % localSizeX == 0:
+                arrayWithSlices.SetTuple1(i, remoteUpperSlice[((i + 1) / localSizeX) - 1])
+            else:
+                arrayWithSlices.SetTuple1(i, vtkarray.GetTuple1(localOffset))
+                localOffset += 1
+        print('%d # create new array with upper slices => DONE' % (idx))
+
     dataset.SetExtent(minX, maxX - 1, 0, sizeY - 1, 0, sizeY - 1)
-    dataset.GetPointData().SetScalars(vtkarray)
+    dataset.GetPointData().SetScalars(arrayWithSlices)
+
+    # -------------------------------------------------------------------------  
 
     vtkDistributedTrivialProducer.SetGlobalOutput('Spark', dataset)
 
@@ -381,11 +477,12 @@ def processPartition(idx, iterator):
         viewportScale=1.0
         viewportMaxWidth=2560
         viewportMaxHeight=1440
+        proxies='/data/sebastien/SparkMPI/defaultProxies.json'
 
         def initialize(self):
             # Bring used components
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebFileListing(_VisualizerServer.dataDir, "Home", _VisualizerServer.excludeRegex, _VisualizerServer.groupRegex))
-            self.registerVtkWebProtocol(pv_protocols.ParaViewWebProxyManager(baseDir=_VisualizerServer.dataDir, allowUnconfiguredReaders=_VisualizerServer.allReaders))
+            self.registerVtkWebProtocol(pv_protocols.ParaViewWebProxyManager(baseDir=_VisualizerServer.dataDir, allowedProxiesFile=_VisualizerServer.proxies, allowUnconfiguredReaders=_VisualizerServer.allReaders))
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebColorManager())
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebMouseHandler())
             self.registerVtkWebProtocol(pv_protocols.ParaViewWebViewPort(_VisualizerServer.viewportScale, _VisualizerServer.viewportMaxWidth,
