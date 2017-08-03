@@ -29,8 +29,8 @@ VALUE_RANGE = [0, 50000]
 fileNames = [
     'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2006.tif',
     'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2007.tif',
-    # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2008.tif',
-    # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2009.tif',
+    'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2008.tif',
+    'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2009.tif',
     # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2010.tif',
     # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2011.tif',
     # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2012.tif',
@@ -48,10 +48,6 @@ sizeX = 0
 sizeY = 0
 sizeZ = 0
 sliceSize = 0
-globalMaxIndex = 0
-
-mpiStepX = 0
-mpiStepX_ = 0
 
 processSlices = []
 
@@ -103,12 +99,6 @@ def computeAveragesUsingNumpy():
     sizeZ = len(flattenedArrays)
 
     return np.ma.concatenate(flattenedArrays)
-
-# def computeAveragesUsingNumpy():
-#     global sizeX, sizeY, sizeZ
-#     sizeX = 1440
-#     sizeY = 720
-#     sizeZ = 10
 
 # -------------------------------------------------------------------------
 # Parallel configuration
@@ -189,7 +179,8 @@ def visualization(partitionId, iterator):
     # Copy data from iterator into data chunk
     t0 = time.time()
     count = 0
-    dataChunk = np.arange(size, dtype=np.int32)
+    dataChunk = np.arange(size, dtype=np.float32)
+    sidChunk = np.arange(size, dtype=np.uint8)
     for item in iterator:
         count += 1
         globalIndex = item[0]
@@ -199,6 +190,7 @@ def visualization(partitionId, iterator):
         ijk[2] -= kOffset
         destIdx = ijk[0] + (ijk[1] * sizeX)  + (ijk[2] * sliceSize)
         dataChunk[destIdx] = pixelValue
+        sidChunk[destIdx] = ijk[2] + kOffset
 
     t1 = time.time()
     print('%d # MPI Gather %s | %d' % (partitionId, str(t1 - t0), count))
@@ -215,12 +207,19 @@ def visualization(partitionId, iterator):
     # -------------------------------------------------------------------------
 
     dataset = vtkImageData()
-    dataArray = vtkIntArray()
+
+    sliceIdxArray = vtkUnsignedCharArray()
+    sliceIdxArray.SetName('Slice Index')
+    sliceIdxArray.SetNumberOfComponents(1)
+    sliceIdxArray.SetNumberOfTuples(size)
+
+    dataArray = vtkFloatArray()
     dataArray.SetName('Annual Avg Temp')
     dataArray.SetNumberOfComponents(1)
     dataArray.SetNumberOfTuples(size)
     for i in range(size):
         dataArray.SetTuple1(i, dataChunk[i])
+        sliceIdxArray.SetTuple1(i, sidChunk[i])
 
     minZ = 0
     maxZ = 0
@@ -228,8 +227,24 @@ def visualization(partitionId, iterator):
         minZ = maxZ
         maxZ += processSlices[i]
 
-    dataset.SetExtent(0, sizeX - 1, 0, sizeY - 1, minZ, maxZ - 1)
-    dataset.GetPointData().SetScalars(dataArray)
+    # dataset.SetExtent(0, sizeX - 1, 0, sizeY - 1, minZ, maxZ - 1)
+    # print('partition %d extents: [%d, %d, %d, %d, %d, %d]' % (partitionId, 0, sizeX - 1, 0, sizeY - 1, minZ, maxZ - 1))
+    dataset.SetExtent(0, sizeX, 0, sizeY, minZ, maxZ)
+    print('partition %d extents: [%d, %d, %d, %d, %d, %d]' % (partitionId, 0, sizeX, 0, sizeY, minZ, maxZ))
+    #dataset.GetPointData().AddArray(dataArray)
+    # dataset.GetPointData().SetScalars(dataArray)
+    dataset.GetCellData().SetScalars(dataArray)
+
+    procIdArray = vtkUnsignedCharArray()
+    procIdArray.SetName('Process Id')
+    procIdArray.SetNumberOfComponents(1)
+    procIdArray.SetNumberOfTuples(size)
+
+    for i in range(size):
+        procIdArray.SetTuple1(i, partitionId)
+
+    dataset.GetCellData().AddArray(procIdArray)
+    dataset.GetCellData().AddArray(sliceIdxArray)
 
     t1 = time.time()
     print('%d # build resulting image data %s | ' % (partitionId, str(t1 - t0)))
@@ -292,7 +307,7 @@ def visualization(partitionId, iterator):
         producer = simple.DistributedTrivialProducer()
         producer.UpdateDataset = ''
         producer.UpdateDataset = 'Spark'
-        producer.WholeExtent = [0, sizeX - 1, 0, sizeY - 1, 0, sizeY - 1]
+        producer.WholeExtent = [0, sizeX, 0, sizeY, 0, sizeZ]
         server.start_webserver(options=args, protocol=_VisualizerServer)
         pm.GetGlobalController().TriggerBreakRMIs()
 
@@ -308,23 +323,12 @@ npArray = computeAveragesUsingNumpy()
 sliceSize = sizeX * sizeY
 print('slice size: %d' % sliceSize)
 
-globalMaxIndex = sizeX * sizeY * sizeZ
-
 processSlices = [ sizeZ / nbMPIPartition for i in range(nbMPIPartition) ]
 for i in range(sizeZ % nbMPIPartition):
     processSlices[i] += 1
 
 print('Dimensions: %d x %d x %d' % (sizeX, sizeY, sizeZ))
 print('number of slices per partition: ', processSlices)
-
-# partitions = [ [] for i in range(nbMPIPartition)]
-# for i in range(globalMaxIndex):
-#     partIdx = getMPIPartition(i)
-#     partitions[partIdx].append(i)
-
-# print('division of work: ')
-# for i in range(len(partitions)):
-#     print('  process %d will handle %d pixels' % (i, len(partitions[i])))
 
 t0 = time.time()
 data = sc.parallelize(npArray)

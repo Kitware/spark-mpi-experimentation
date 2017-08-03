@@ -8,5 +8,5 @@ export HYDRA_PROXY_PORT=55555
 
 /data/scott/SparkMPI/spark-mpi/install/bin/pmiserv -n ${MPI_SIZE} hello &
 
-/data/scott/SparkMPI/spark-2.1.1-bin-hadoop2.7/bin/spark-submit --master spark://beast:7077 --driver-memory 20g  --executor-memory 10g ./pvw-spark.py
+/data/scott/SparkMPI/spark-2.1.1-bin-hadoop2.7/bin/spark-submit --master spark://beast:7077 --driver-memory 30g  --executor-memory 10g ./pvw-spark.py
 
