@@ -27,8 +27,7 @@ sc.getConf().set('mpi', pmi_port)
 # -------------------------------------------------------------------------
 # Read Tiff file
 # -------------------------------------------------------------------------
-
-filePath = '/data/sebastien/SparkMPI/data-convert/etl/TiltSeries_NanoParticle_doi_10.1021-nl103400a.tif'
+filePath = '/data/scott/SparkMPI/data-convert/etl/TiltSeries_NanoParticle_doi_10.1021-nl103400a.tif'
 reader = simple.TIFFSeriesReader(FileNames=[filePath])
 reader.UpdatePipeline()
 imageData = reader.GetClientSideObject().GetOutputDataObject(0)
@@ -355,7 +354,7 @@ def processPartition(idx, iterator):
         host = 'localhost'
         port = 9753
         timeout = 300
-        content = '/data/sebastien/SparkMPI/runtime/visualizer/dist'
+        content = '/data/scott/SparkMPI/runtime/visualizer-2.1.4/dist'
         forceFlush = False
         sslKey = ''
         sslCert = ''

@@ -31,12 +31,12 @@ fileNames = [
     'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2007.tif',
     'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2008.tif',
     'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2009.tif',
-    # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2010.tif',
-    # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2011.tif',
-    # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2012.tif',
-    # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2013.tif',
-    # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2014.tif',
-    # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2015.tif',
+    'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2010.tif',
+    'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2011.tif',
+    'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2012.tif',
+    'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2013.tif',
+    'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2014.tif',
+    'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2015.tif',
 ]
 basepath = '/data/scott/SparkMPI/data/gddp'
 
@@ -76,16 +76,16 @@ def computeAveragesUsingNumpy():
         year = fileName.split('_')[-1][:-4]
 
         dataset = gdal.Open(fpath)
-    
+
         sumArray = ma.zeros((dataset.RasterYSize, dataset.RasterXSize))
         total = 0
         count = 0
         numBands = dataset.RasterCount
-    
+
         for bandId in range(numBands):
             band = ma.masked_outside(dataset.GetRasterBand(bandId + 1).ReadAsArray(), VALUE_RANGE[0], VALUE_RANGE[1])
             sumArray += band
-    
+
         sumArray /= numBands
         total = ma.sum(ma.sum(sumArray))
         count = sumArray.count()

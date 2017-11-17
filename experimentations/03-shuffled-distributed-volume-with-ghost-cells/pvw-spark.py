@@ -41,7 +41,7 @@ def processPartition(idx, iterator):
     os.environ["DISPLAY"] = ":0"
 
     print(idx, pmi_port, '='*80)
-    
+
     import paraview
     paraview.options.batch = True
 
@@ -60,7 +60,7 @@ def processPartition(idx, iterator):
 
     for pix in iterator:
         cellArray.SetValue(int(pix[0]), int(pix[1]))
-        cellMask.SetTuple1(pix[0], 1) # Duplicate
+        cellMask.SetTuple1(pix[0], 1) # DUPLICATECELL
 
     imageData = vtkImageData()
     imageData.SetDimensions(101, 217, 262)
@@ -142,7 +142,7 @@ def processPartition(idx, iterator):
         producer.UpdateDataset = 'Spark'
         server.start_webserver(options=args, protocol=_VisualizerServer)
         pm.GetGlobalController().TriggerBreakRMIs()
-            
+
     yield (idx, partition)
 
 # -------------------------------------------------------------------------

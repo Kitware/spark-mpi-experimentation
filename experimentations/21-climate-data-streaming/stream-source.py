@@ -25,7 +25,7 @@ server = True
 # Files to process
 # -------------------------------------------------------------------------
 
-basepath = '/data/sebastien/SparkMPI/data/gddp'
+basepath = '/data/scott/SparkMPI/data/gddp'
 
 fileNames = [
     'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2006.tif',
@@ -74,8 +74,8 @@ t0 = time.time()
 for fileName in fileNames:
     for value in readFileData(fileName):
         channel.send('%s\n' % str(value))
-        
+
 t1 = time.time()
-print('### Total execution time - %s ' % str(t1 - t0))    
+print('### Total execution time - %s ' % str(t1 - t0))
 
 
