@@ -315,8 +315,8 @@ data = sc.parallelize(pathList, npSparkPartition)
 rdd = data.map(readDay)                    \
     .reduceByKey(sumDays, numPartitions=len(fileNames)) \
     .map(average)                          \
-    .coalesce(nbMPIPartition)              \
     .sortByKey()                           \
+    .coalesce(nbMPIPartition)              \
     .mapPartitionsWithIndex(visualization) \
     .collect()
 
