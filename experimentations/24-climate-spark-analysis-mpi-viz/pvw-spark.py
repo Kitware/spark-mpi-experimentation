@@ -30,13 +30,13 @@ fileNames = [
     'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2006.tif',
     'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2007.tif',
     'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2008.tif',
-    # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2009.tif',
-    # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2010.tif',
-    # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2011.tif',
-    # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2012.tif',
-    # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2013.tif',
-    # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2014.tif',
-    # 'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2015.tif',
+    'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2009.tif',
+    'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2010.tif',
+    'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2011.tif',
+    'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2012.tif',
+    'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2013.tif',
+    'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2014.tif',
+    'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2015.tif',
 ]
 allYearsList = [ f[-8:-4] for f in fileNames ]
 basepath = '/data/scott/SparkMPI/data/gddp'
@@ -75,9 +75,18 @@ def sumDays(accum, nextDay):
 
 def average(data):
     year = data[0]
-    print('Computing average for %s' % str(year))
-    sumArray = data[1]
-    return (year, sumArray / 365.0)
+    sumArray = data[1] / 365.0
+    sumOfAvgs = np.sum(np.sum(sumArray))
+    print('Computed average for %s, array shape = [%d, %d], total avg sum = %s' % (str(year), sumArray.shape[0], sumArray.shape[1], str(sumOfAvgs)))
+    return (year, sumArray)
+
+def partitionAverage(dataIterator):
+    for data in dataIterator:
+        year = data[0]
+        sumArray = data[1] / 365.0
+        sumOfAvgs = np.sum(np.sum(sumArray))
+        print('Computed average for %s, array shape = [%d, %d], total avg sum = %s' % (str(year), sumArray.shape[0], sumArray.shape[1], str(sumOfAvgs)))
+        yield (year, sumArray)
 
 # -------------------------------------------------------------------------
 # Parallel configuration
@@ -146,7 +155,6 @@ def visualization(partitionId, iterator):
     for item in iterator:
         numYears += 1
         print('visualize (partition %d) peeking at next year %s, shape = [%d, %d]' % (partitionId, item[0], item[1].shape[1], item[1].shape[0]))
-        # print(item[1])
         localYears.append(item[0])
         localAvgData.append(item[1])
 
@@ -159,7 +167,7 @@ def visualization(partitionId, iterator):
 
     print('visualize, partition id = %d, sizeX = %d, sizeY = %d, sliceSize = %d, localNumSlices = %d, size = %d' % (partitionId, sizeX, sizeY, sliceSize, localNumSlices, size))
 
-    # # Copy data from iterator into data chunk
+    # Copy data from iterator into data chunk
     t0 = time.time()
     count = 0
     globalSliceIndices = []
@@ -190,7 +198,7 @@ def visualization(partitionId, iterator):
     from vtk.vtkCommonCore import vtkIntArray, vtkUnsignedCharArray, vtkFloatArray
     from vtk.vtkCommonDataModel import vtkImageData, vtkPointData
 
-    # # -------------------------------------------------------------------------
+    # -------------------------------------------------------------------------
 
     dataset = vtkImageData()
 
@@ -210,12 +218,8 @@ def visualization(partitionId, iterator):
     minZ = globalSliceIndices[0]
     maxZ = globalSliceIndices[-1]
 
-    # dataset.SetExtent(0, sizeX - 1, 0, sizeY - 1, minZ, maxZ - 1)
-    # print('partition %d extents: [%d, %d, %d, %d, %d, %d]' % (partitionId, 0, sizeX - 1, 0, sizeY - 1, minZ, maxZ - 1))
-    dataset.SetExtent(0, sizeX - 1, 0, sizeY - 1, minZ, maxZ)
-    print('partition %d extents: [%d, %d, %d, %d, %d, %d]' % (partitionId, 0, sizeX - 1, 0, sizeY - 1, minZ, maxZ))
-    #dataset.GetPointData().AddArray(dataArray)
-    # dataset.GetPointData().SetScalars(dataArray)
+    print('partition %d extents: [%d, %d, %d, %d, %d, %d]' % (partitionId, 0, sizeX, 0, sizeY, minZ, maxZ + 1))
+    dataset.SetExtent(0, sizeX, 0, sizeY, minZ, maxZ + 1)
     dataset.GetCellData().SetScalars(dataArray)
 
     procIdArray = vtkUnsignedCharArray()
@@ -235,10 +239,7 @@ def visualization(partitionId, iterator):
 
     # -------------------------------------------------------------------------
 
-    print('%d about to set global output on producer' % partitionId)
-    print(dataset)
     vtkDistributedTrivialProducer.SetGlobalOutput('Spark', dataset)
-    print('%d just set global output on producer' % partitionId)
 
     from vtk.vtkPVClientServerCoreCore import vtkProcessModule
     from paraview     import simple
@@ -278,10 +279,7 @@ def visualization(partitionId, iterator):
             interactionProxy = pxm.GetProxy('settings', 'RenderViewInteractionSettings')
             interactionProxy.Camera3DManipulators = ['Rotate', 'Pan', 'Zoom', 'Pan', 'Roll', 'Pan', 'Zoom', 'Rotate', 'Zoom']
 
-
-    print('%d about to GetProcessModule' % partitionId)
     pm = vtkProcessModule.GetProcessModule()
-    print('%d successfully got process module' % partitionId)
 
     # -------------------------------------------------------------------------
 
@@ -295,8 +293,8 @@ def visualization(partitionId, iterator):
         producer = simple.DistributedTrivialProducer()
         producer.UpdateDataset = ''
         producer.UpdateDataset = 'Spark'
-        print('rank 0 process setting whole extent to [%d, %d, %d, %d, %d, %d]' % (0, sizeX - 1, 0, sizeY - 1, 0, sizeZ - 1))
-        producer.WholeExtent = [0, sizeX - 1, 0, sizeY - 1, 0, sizeZ - 1]
+        print('rank 0 process setting whole extent to [%d, %d, %d, %d, %d, %d]' % (0, sizeX, 0, sizeY, 0, sizeZ))
+        producer.WholeExtent = [0, sizeX, 0, sizeY, 0, sizeZ]
         server.start_webserver(options=args, protocol=_VisualizerServer)
         pm.GetGlobalController().TriggerBreakRMIs()
 
@@ -317,21 +315,13 @@ data = sc.parallelize(pathList, npSparkPartition)
 rdd = data.map(readDay)                    \
     .reduceByKey(sumDays, numPartitions=len(fileNames)) \
     .map(average)                          \
-    .sortByKey()                           \
     .coalesce(nbMPIPartition)              \
+    .sortByKey()                           \
     .mapPartitionsWithIndex(visualization) \
     .collect()
 
+    # .sortByKey()                           \
+    # .repartition(nbMPIPartition)           \
+    # .mapPartitions(partitionAverage, preservesPartitioning=True) \
     # .glom() \
     # .collect()
-
-print(rdd)
-
-#
-#
-# .mapPartitionsWithIndex(visualization) \
-
-# t1 = time.time()
-# print('### Total execution time - %s | ' % str(t1 - t0))
-
-# print('### Stop execution - %s' % str(datetime.now()))
