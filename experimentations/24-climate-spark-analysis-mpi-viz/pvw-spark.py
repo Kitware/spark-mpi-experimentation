@@ -38,87 +38,66 @@ fileNames = [
     'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2014.tif',
     'tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2015.tif',
 ]
+allYearsList = [ f[-8:-4] for f in fileNames ]
 basepath = '/data/scott/SparkMPI/data/gddp'
 
 # -------------------------------------------------------------------------
 # Module-level variables and helper functions
 # -------------------------------------------------------------------------
 
-sizeX = 0
-sizeY = 0
-sizeZ = 0
-sliceSize = 0
-
-processSlices = []
-
-def _ijk(index):
-    return [
-        (index % sizeX),
-        (index / sizeX % sizeY),
-        int(index / sliceSize),
-    ]
-
-def swap(kv):
-    return (kv[1], kv[0])
+sizeZ = len(fileNames)
 
 # -------------------------------------------------------------------------
-# Function to compute the average image for all years
+#
 # -------------------------------------------------------------------------
 
-def computeAveragesUsingNumpy():
-    global sizeX, sizeY, sizeZ
-    flattenedArrays = []
+def readDay(dayFile):
+    dayIdx = dayFile[1]
+    fileName = dayFile[0]
+    year = fileName.split('_')[-1][:-4]
 
-    for fileName in fileNames:
-        fpath = os.path.join(basepath, fileName)
-        print('processing %s' % fpath)
+    dataset = gdal.Open(fileName)
 
-        year = fileName.split('_')[-1][:-4]
+    imgDims = [dataset.RasterYSize, dataset.RasterXSize]
+    numPixels = imgDims[0] * imgDims[1]
 
-        dataset = gdal.Open(fpath)
+    result = []
 
-        sumArray = ma.zeros((dataset.RasterYSize, dataset.RasterXSize))
-        total = 0
-        count = 0
-        numBands = dataset.RasterCount
+    # for bandId in range(dataset.RasterCount):
+    print('year: %s, band: %d' % (year, dayIdx + 1))
+    band = ma.masked_outside(dataset.GetRasterBand(dayIdx + 1).ReadAsArray(), VALUE_RANGE[0], VALUE_RANGE[1])
+    # .astype(np.dtype(np.int32))
 
-        for bandId in range(numBands):
-            band = ma.masked_outside(dataset.GetRasterBand(bandId + 1).ReadAsArray(), VALUE_RANGE[0], VALUE_RANGE[1])
-            sumArray += band
+    return (year, band)
 
-        sumArray /= numBands
-        total = ma.sum(ma.sum(sumArray))
-        count = sumArray.count()
-        minCell = ma.min(sumArray)
-        maxCell = ma.max(sumArray)
-        sizeX = dataset.RasterXSize
-        sizeY = dataset.RasterYSize
+def sumDays(accum, nextDay):
+    return accum + nextDay
 
-        flattenedArrays.append(np.ndarray.flatten(sumArray[::-1,:], 0).astype(np.dtype(np.int32)))
+def average(data):
+    year = data[0]
+    sumArray = data[1] / 365.0
+    sumOfAvgs = np.sum(np.sum(sumArray))
+    print('Computed average for %s, array shape = [%d, %d], total avg sum = %s' % (str(year), sumArray.shape[0], sumArray.shape[1], str(sumOfAvgs)))
+    return (year, sumArray)
 
-    sizeZ = len(flattenedArrays)
-
-    return np.ma.concatenate(flattenedArrays)
+def partitionAverage(dataIterator):
+    for data in dataIterator:
+        year = data[0]
+        sumArray = data[1] / 365.0
+        sumOfAvgs = np.sum(np.sum(sumArray))
+        print('Computed average for %s, array shape = [%d, %d], total avg sum = %s' % (str(year), sumArray.shape[0], sumArray.shape[1], str(sumOfAvgs)))
+        yield (year, sumArray)
 
 # -------------------------------------------------------------------------
 # Parallel configuration
 # -------------------------------------------------------------------------
 
 nbMPIPartition = int(os.environ["MPI_SIZE"])
+npSparkPartition = int(os.environ["SPARK_SIZE"])
 
 # -------------------------------------------------------------------------
 # Partition handling
 # -------------------------------------------------------------------------
-
-def getMPIPartition(index):
-    currentEdge = 0
-    for i in range(len(processSlices)):
-        currentEdge += (processSlices[i] * sliceSize)
-        if index < currentEdge:
-            return i
-
-    return nbMPIPartition - 1
-
 
 sc = SparkContext()
 
@@ -170,27 +149,42 @@ def visualization(partitionId, iterator):
     os.environ["PV_ALLOW_BATCH_INTERACTION"] = "1"
     os.environ["DISPLAY"] = ":0"
 
-    localNumSlices = processSlices[partitionId]
+    numYears = 0
+    localYears = []
+    localAvgData = []
+    for item in iterator:
+        numYears += 1
+        print('visualize (partition %d) peeking at next year %s, shape = [%d, %d]' % (partitionId, item[0], item[1].shape[1], item[1].shape[0]))
+        localYears.append(item[0])
+        localAvgData.append(item[1])
+
+    sizeX = localAvgData[0].shape[1]
+    sizeY = localAvgData[0].shape[0]
+
+    sliceSize = sizeX * sizeY
+    localNumSlices = numYears
     size = localNumSlices * sliceSize
-    kOffset = 0
-    for i in range(partitionId):
-        kOffset += processSlices[i]
+
+    print('visualize, partition id = %d, sizeX = %d, sizeY = %d, sliceSize = %d, localNumSlices = %d, size = %d' % (partitionId, sizeX, sizeY, sliceSize, localNumSlices, size))
 
     # Copy data from iterator into data chunk
     t0 = time.time()
     count = 0
+    globalSliceIndices = []
     dataChunk = np.arange(size, dtype=np.float32)
     sidChunk = np.arange(size, dtype=np.uint8)
-    for item in iterator:
-        count += 1
-        globalIndex = item[0]
-        pixelValue = item[1]
-        # print('%d # %d: %f' % (partitionId, globalIndex, pixelValue))
-        ijk = _ijk(globalIndex)
-        ijk[2] -= kOffset
-        destIdx = ijk[0] + (ijk[1] * sizeX)  + (ijk[2] * sliceSize)
-        dataChunk[destIdx] = pixelValue
-        sidChunk[destIdx] = ijk[2] + kOffset
+    for localSliceIdx in range(len(localYears)):
+        globalSliceIdx = allYearsList.index(localYears[localSliceIdx])
+        globalSliceIndices.append(globalSliceIdx)
+        nextAvgArray = localAvgData[localSliceIdx]
+        (imgHeight, imgWidth) = nextAvgArray.shape
+        for y in range(imgHeight):
+            for x in range(imgWidth):
+                count += 1
+                pixelValue = nextAvgArray[y][x]
+                destIdx = x + (y * sizeX) + (localSliceIdx * sliceSize)
+                dataChunk[destIdx] = pixelValue
+                sidChunk[destIdx] = globalSliceIdx
 
     t1 = time.time()
     print('%d # MPI Gather %s | %d' % (partitionId, str(t1 - t0), count))
@@ -221,18 +215,11 @@ def visualization(partitionId, iterator):
         dataArray.SetTuple1(i, dataChunk[i])
         sliceIdxArray.SetTuple1(i, sidChunk[i])
 
-    minZ = 0
-    maxZ = 0
-    for i in range(partitionId + 1):
-        minZ = maxZ
-        maxZ += processSlices[i]
+    minZ = globalSliceIndices[0]
+    maxZ = globalSliceIndices[-1]
 
-    # dataset.SetExtent(0, sizeX - 1, 0, sizeY - 1, minZ, maxZ - 1)
-    # print('partition %d extents: [%d, %d, %d, %d, %d, %d]' % (partitionId, 0, sizeX - 1, 0, sizeY - 1, minZ, maxZ - 1))
-    dataset.SetExtent(0, sizeX, 0, sizeY, minZ, maxZ)
-    print('partition %d extents: [%d, %d, %d, %d, %d, %d]' % (partitionId, 0, sizeX, 0, sizeY, minZ, maxZ))
-    #dataset.GetPointData().AddArray(dataArray)
-    # dataset.GetPointData().SetScalars(dataArray)
+    print('partition %d extents: [%d, %d, %d, %d, %d, %d]' % (partitionId, 0, sizeX, 0, sizeY, minZ, maxZ + 1))
+    dataset.SetExtent(0, sizeX, 0, sizeY, minZ, maxZ + 1)
     dataset.GetCellData().SetScalars(dataArray)
 
     procIdArray = vtkUnsignedCharArray()
@@ -292,7 +279,6 @@ def visualization(partitionId, iterator):
             interactionProxy = pxm.GetProxy('settings', 'RenderViewInteractionSettings')
             interactionProxy.Camera3DManipulators = ['Rotate', 'Pan', 'Zoom', 'Pan', 'Roll', 'Pan', 'Zoom', 'Rotate', 'Zoom']
 
-
     pm = vtkProcessModule.GetProcessModule()
 
     # -------------------------------------------------------------------------
@@ -307,6 +293,7 @@ def visualization(partitionId, iterator):
         producer = simple.DistributedTrivialProducer()
         producer.UpdateDataset = ''
         producer.UpdateDataset = 'Spark'
+        print('rank 0 process setting whole extent to [%d, %d, %d, %d, %d, %d]' % (0, sizeX, 0, sizeY, 0, sizeZ))
         producer.WholeExtent = [0, sizeX, 0, sizeY, 0, sizeZ]
         server.start_webserver(options=args, protocol=_VisualizerServer)
         pm.GetGlobalController().TriggerBreakRMIs()
@@ -318,28 +305,23 @@ def visualization(partitionId, iterator):
 # Spark pipeline
 # -------------------------------------------------------------------------
 
-npArray = computeAveragesUsingNumpy()
+print('Starting processing, # spark partitions = %d, # mpi partitions = %d' % (npSparkPartition, nbMPIPartition))
 
-sliceSize = sizeX * sizeY
-print('slice size: %d' % sliceSize)
+# pathList will contain 3650 entries like ('/data/scott/SparkMPI/data/gddp/tasmax_day_BCSD_rcp85_r1i1p1_MRI-CGCM3_2010.tif', 17)
+pathList = [ (os.path.join(basepath, fileNames[i]), j) for i in range(len(fileNames)) for j in range(365) ]
 
-processSlices = [ sizeZ / nbMPIPartition for i in range(nbMPIPartition) ]
-for i in range(sizeZ % nbMPIPartition):
-    processSlices[i] += 1
+data = sc.parallelize(pathList, npSparkPartition)
 
-print('Dimensions: %d x %d x %d' % (sizeX, sizeY, sizeZ))
-print('number of slices per partition: ', processSlices)
-
-t0 = time.time()
-data = sc.parallelize(npArray)
-
-rdd = data.zipWithIndex() \
-    .map(swap) \
-    .partitionBy(nbMPIPartition, getMPIPartition) \
+rdd = data.map(readDay)                    \
+    .reduceByKey(sumDays, numPartitions=len(fileNames)) \
+    .map(average)                          \
+    .sortByKey()                           \
+    .coalesce(nbMPIPartition)              \
     .mapPartitionsWithIndex(visualization) \
     .collect()
 
-t1 = time.time()
-print('### Total execution time - %s | ' % str(t1 - t0))
-
-print('### Stop execution - %s' % str(datetime.now()))
+    # .sortByKey()                           \
+    # .repartition(nbMPIPartition)           \
+    # .mapPartitions(partitionAverage, preservesPartitioning=True) \
+    # .glom() \
+    # .collect()
